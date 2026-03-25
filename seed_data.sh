@@ -1,59 +1,70 @@
 #!/bin/bash
 
 # --- INPUTS ---
-read -p "Enter Server IP: " SERVER_IP
-read -p "Enter Port: " SERVER_PORT
+read -p "Enter Server IP (e.g., 192.168.0.13): " SERVER_IP
+read -p "Enter Port (e.g., 8080): " SERVER_PORT
 read -p "Enter Admin Auth Token: " AUTH_TOKEN
 
 BASE_URL="http://$SERVER_IP:$SERVER_PORT"
-# We filter for birthdays starting with 1997-10
-QUERY_URL="$BASE_URL/api/collections/users/records?filter=(birthday~'1997-10')&perPage=500"
+COLLECTION_URL="$BASE_URL/api/collections/users/records"
 
 echo "-----------------------------------------------"
-echo "🔍 Searching for October 1997 records..."
+echo "🚀 Starting injection of 2,000 Auth records..."
 echo "-----------------------------------------------"
 
-# 1. Fetch the records
-# We save the JSON response to a temporary file
-RESPONSE=$(curl -s -X GET "$QUERY_URL" -H "Authorization: $AUTH_TOKEN")
+names=("Alex" "Jordan" "Taylor" "Morgan" "Casey" "Riley" "Jamie" "Skyler" "Harry" "Charlie")
+statuses=("active" "pending" "archived")
 
-# 2. Extract the IDs
-# This regex looks for the "id":"..." pattern in the JSON
-IDS=$(echo "$RESPONSE" | grep -oP '"id":"\K[^"]+')
-
-COUNT=$(echo "$IDS" | wc -w)
-
-if [ "$COUNT" -eq 0 ]; then
-    echo "✅ No matching records found. The database is already clean!"
-    exit 0
-fi
-
-echo "Found $COUNT records to delete."
-read -p "⚠️ Proceed with deletion? (y/n): " PROCEED
-
-if [ "$PROCEED" != "y" ]; then
-    echo "Operation cancelled."
-    exit 0
-fi
-
-# 3. Loop and Delete
-CURRENT=1
-for ID in $IDS
+for i in {1..2000}
 do
-    DELETE_URL="$BASE_URL/api/collections/users/records/$ID"
+    # 1. Generate unique identifiers
+    ID_PADDED=$(printf "%04d" $i)
+    RAND_NAME="${names[$RANDOM % ${#names[@]}]}_$ID_PADDED"
+    RAND_STATUS="${statuses[$RANDOM % ${#statuses[@]}]}"
     
-    STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE "$DELETE_URL" \
-        -H "Authorization: $AUTH_TOKEN")
+    # Required for Auth Collections:
+    USER_EMAIL="user_${ID_PADDED}@example.com"
+    USER_PASS="password123"
 
-    if [ "$STATUS" -eq 204 ]; then
-        echo "[$CURRENT/$COUNT] 🗑️ Deleted ID: $ID"
+    # 2. Randomize Birthday logic (10% chance for Oct 1997)
+    CHANCE=$((1 + $RANDOM % 100))
+    if [ $CHANCE -le 10 ]; then
+        DAY=$((1 + $RANDOM % 31))
+        BIRTHDAY="1997-10-$(printf "%02d" $DAY) 12:00:00Z"
     else
-        echo "[$CURRENT/$COUNT] ❌ Failed to delete ID: $ID (Status: $STATUS)"
+        YEAR=$((1980 + $RANDOM % 31))
+        MONTH=$((1 + $RANDOM % 12))
+        DAY=$((1 + $RANDOM % 28))
+        BIRTHDAY="$YEAR-$(printf "%02d" $MONTH)-$(printf "%02d" $DAY) 12:00:00Z"
     fi
+
+    # 3. Send Request
+    # We capture the HTTP status code to see if it's working
+    RESPONSE=$(curl -s -w "%{http_code}" -X POST "$COLLECTION_URL" \
+        -H "Authorization: $AUTH_TOKEN" \
+        -H "Content-Type: application/json" \
+        -d "{
+            \"email\": \"$USER_EMAIL\",
+            \"password\": \"$USER_PASS\",
+            \"passwordConfirm\": \"$USER_PASS\",
+            \"name\": \"$RAND_NAME\",
+            \"birthday\": \"$BIRTHDAY\",
+            \"status\": \"$RAND_STATUS\",
+            \"verified\": true
+        }")
+
+    # 4. Progress Tracking & Debugging
+    HTTP_STATUS="${RESPONSE:${#RESPONSE}-3}"
     
-    ((CURRENT++))
+    if [ "$HTTP_STATUS" -ne 200 ]; then
+        echo "❌ Failed at record $i (HTTP $HTTP_STATUS). Response: ${RESPONSE:0:${#RESPONSE}-3}"
+        exit 1
+    fi
+
+    if (( $i % 100 == 0 )); then
+        echo "✅ Injected $i/2000 records..."
+    fi
 done
 
 echo "-----------------------------------------------"
-echo "✨ Cleanup Complete!"
-echo "-----------------------------------------------"
+echo "✨ Finished! 2,000 users created."
